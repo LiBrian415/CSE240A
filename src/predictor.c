@@ -101,7 +101,7 @@ void init_tournament() {
 
     memset(((tournament*) predictor)->gbht, WN, 1 << ghistoryBits);
     memset(((tournament*) predictor)->lbht, WN, 1 << lhistoryBits);
-    memset(((tournament*) predictor)->chsr, WN, 1 << ghistoryBits);
+    memset(((tournament*) predictor)->chsr, WT, 1 << ghistoryBits);
 }
 
 uint8_t predict_tournament_local(uint32_t pc) {
@@ -155,13 +155,13 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
     uint8_t local = predict_tournament_local(pc);
     uint8_t global = predict_tournament_global();
     int idx = mask_value(pc, ghistoryBits);
-    uint8_t a = ~(local ^ outcome);
-    uint8_t b = ~(global ^ outcome);
-    int diff = ((int) a) - ((int) b);
+    uint8_t a = ~(local ^ outcome) & 1;
+    uint8_t b = ~(global ^ outcome) & 1;
+    int diff = a - b;
 
-    if (diff > 0 && (p->chsr)[idx] != SN) {
+    if (diff == 1 && (p->chsr)[idx] != SN) {
         (p->chsr)[idx] -= 1;
-    } else if (diff < 0 && (p->chsr)[idx] != ST) {
+    } else if (diff == -1 && (p->chsr)[idx] != ST) {
         (p->chsr)[idx] += 1;
     }
 
