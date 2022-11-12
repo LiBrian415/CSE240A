@@ -117,7 +117,7 @@ uint8_t predict_tournament_global() {
 
 uint8_t predict_tournament(uint32_t pc) {
     tournament* p = (tournament*) predictor;
-    int idx = mask_value(pc, ghistoryBits);
+    int idx = mask_value(p->gbhr, ghistoryBits);
     if ((p->chsr)[idx] <= 1) {
         return predict_tournament_local(pc);
     } else {
@@ -154,7 +154,7 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
     tournament* p = (tournament*) predictor;
     uint8_t local = predict_tournament_local(pc);
     uint8_t global = predict_tournament_global();
-    int idx = mask_value(pc, ghistoryBits);
+    int idx = mask_value(p->gbhr, ghistoryBits);
     uint8_t a = ~(local ^ outcome) & 1;
     uint8_t b = ~(global ^ outcome) & 1;
     int diff = a - b;
@@ -167,6 +167,104 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
 
     train_tournament_local(pc, outcome);
     train_tournament_global(outcome);
+}
+
+/*
+Custom is an "extension" of tournament, addressing the apparently flaws with
+its global branch predictor which is made apparent by the poor performance when
+compared to gshare.
+*/
+typedef struct custom {
+    uint8_t*  gbht;
+    uint8_t*  lbht;
+    uint32_t*  lht;
+    uint8_t*  chsr;
+    uint32_t  gbhr;
+} custom ;
+
+void init_custom() {
+    ghistoryBits = 13;
+    lhistoryBits = 10;
+    pcIndexBits  = 10;
+
+    predictor = malloc(sizeof(custom));
+    ((custom*) predictor)->gbht = (uint8_t *) malloc((1 << ghistoryBits) * sizeof(uint8_t));
+    ((custom*) predictor)->lbht = (uint8_t *) malloc((1 << lhistoryBits) * sizeof(uint8_t));
+    ((custom*) predictor)->chsr = (uint8_t *) malloc((1 << ghistoryBits) * sizeof(uint8_t));
+    ((custom*) predictor)->lht  = (uint32_t *) calloc((1 << pcIndexBits), sizeof(uint32_t));
+    ((custom*) predictor)->gbhr = 0;
+
+    memset(((custom*) predictor)->gbht, WN, 1 << ghistoryBits);
+    memset(((custom*) predictor)->lbht, WN, 1 << lhistoryBits);
+    memset(((custom*) predictor)->chsr, WT, 1 << ghistoryBits);
+}
+
+uint8_t predict_custom_local(uint32_t pc) {
+    custom* p = (custom*) predictor;
+    uint32_t l_history = (p->lht)[mask_value(pc, pcIndexBits)];
+    return (p->lbht)[l_history] <= 1 ? NOTTAKEN : TAKEN;
+}
+
+uint8_t predict_custom_global(uint32_t pc) {
+    custom* p = (custom*) predictor;
+    uint32_t idx = mask_value(pc ^ (p->gbhr), ghistoryBits);
+    return (p->gbht)[idx] <= 1 ? NOTTAKEN : TAKEN;
+}
+
+uint8_t predict_custom(uint32_t pc) {
+    custom* p = (custom*) predictor;
+    int idx = mask_value(pc, ghistoryBits);
+    if ((p->chsr)[idx] <= 1) {
+        return predict_custom_local(pc);
+    } else {
+        return predict_custom_global(pc);
+    }
+}
+
+void train_custom_local(uint32_t pc, uint8_t outcome) {
+    custom* p = (custom*) predictor;
+    uint32_t* l_history = &(p->lht)[mask_value(pc, pcIndexBits)];
+
+    if (outcome && (p->lbht)[*l_history] != ST) {
+        (p->lbht)[*l_history] += 1;
+    } else if (!outcome && (p->lbht)[*l_history] != SN) {
+        (p->lbht)[*l_history] -= 1;
+    }
+
+    update_history(l_history, lhistoryBits, outcome);
+}
+
+void train_custom_global(uint32_t pc, uint8_t outcome) {
+    custom* p = (custom*) predictor;
+
+    uint32_t idx = mask_value(pc ^ (p->gbhr), ghistoryBits);
+
+    if (outcome && (p->gbht)[idx] != ST) {
+        (p->gbht)[idx] += 1;
+    } else if (!outcome && (p->gbht)[idx] != SN) {
+        (p->gbht)[idx] -= 1;
+    }
+
+    update_history(&(p->gbhr), ghistoryBits, outcome);
+}
+
+void train_custom(uint32_t pc, uint8_t outcome) {
+    custom* p = (custom*) predictor;
+    uint8_t local = predict_custom_local(pc);
+    uint8_t global = predict_custom_global(pc);
+    int idx = mask_value(pc, ghistoryBits);
+    uint8_t a = ~(local ^ outcome) & 1;
+    uint8_t b = ~(global ^ outcome) & 1;
+    int diff = a - b;
+
+    if (diff == 1 && (p->chsr)[idx] != SN) {
+        (p->chsr)[idx] -= 1;
+    } else if (diff == -1 && (p->chsr)[idx] != ST) {
+        (p->chsr)[idx] += 1;
+    }
+
+    train_custom_local(pc, outcome);
+    train_custom_global(pc, outcome);
 }
 
 
@@ -192,6 +290,8 @@ init_predictor()
       init_tournament();
       break;
     case CUSTOM:
+      init_custom();
+      break;
     default:
       break;
   }
@@ -218,6 +318,7 @@ make_prediction(uint32_t pc)
     case TOURNAMENT:
       return predict_tournament(pc);
     case CUSTOM:
+      return predict_custom(pc);
     default:
       break;
   }
@@ -245,6 +346,8 @@ train_predictor(uint32_t pc, uint8_t outcome)
       train_tournament(pc, outcome);
       break;
     case CUSTOM:
+      train_custom(pc, outcome);
+      break;
     default:
       break;
   }
